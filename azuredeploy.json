@@ -1,0 +1,175 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "FunctionAppName": {
+            "defaultValue": "AzureTalksToSplunk",
+            "type": "String",
+            "metadata": {
+                "description": "Function app Name"
+            }
+        },
+        "SPLUNK_URL": {
+            "type": "String",
+            "metadata": {
+                "description": "Splunk FQDN like splunkhf.ilabs.io"
+            }
+        },
+        "SPLUNK_PORT": {
+            "type": "String",
+            "metadata": {
+                "description": "Port HEC is configured to listen to, ex: 8088"
+            }
+        },
+        "HEC_TOKEN": {
+            "type": "String",
+            "metadata": {
+                "description": "HEC token is created once HEC is configured on splunk"
+            }
+        },
+        "SPLUNK_SOURCETYPE": {
+            "type": "String",
+            "defaultValue": "illumio:pce",
+            "metadata": {
+                "description": "illumio:pce"
+            }
+        }
+    },
+    "variables": {
+        "hostingPlanName": "[parameters('FunctionAppName')]",
+        "storageAccountName": "[parameters('FunctionAppName')]",
+        "functionAppName": "[parameters('FunctionAppName')]",
+        "applicationInsightsName": "[parameters('FunctionAppName')]",
+        "SPLUNK_URL": "[parameters('SPLUNK_URL')]",
+        "SPLUNK_PORT": "[parameters('SPLUNK_PORT')]",
+        "HEC_TOKEN": "[parameters('HEC_TOKEN')]",
+        "SPLUNK_SOURCETYPE": "[parameters('SPLUNK_SOURCETYPE')]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2022-03-01",
+            "name": "[variables('hostingPlanName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "functionapp,linux",
+            "sku": {
+                "name": "Y1",
+                "tier": "Dynamic"
+            },
+            "properties": {
+                "name": "[variables('hostingPlanName')]",
+                "workerSize": "0",
+                "workerSizeId": "0",
+                "numberOfWorkers": "1",
+                "reserved": true
+            }
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2023-04-01",
+            "name": "[variables('storageAccountName')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "kind": "StorageV2",
+            "properties": {
+                "accessTier": "Hot",
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": "true",
+                "allowBlobPublicAccess": "false",
+                "allowSharedKeyAccess": "true",
+                "networkAcls": {
+                    "bypass": "AzureServices",
+                    "defaultAction": "Allow",
+                    "ipRules": []
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2020-02-02",
+            "name": "[variables('applicationInsightsName')]",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "[concat('hidden-link:', resourceId('Microsoft.Web/sites', variables('applicationInsightsName')))]": "Resource"
+            },
+            "properties": {
+                "Application_Type": "web"
+            },
+            "kind": "web"
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2020-06-01",
+            "name": "[variables('functionAppName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "functionapp,linux",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+                "[resourceId('Microsoft.Insights/components', variables('applicationInsightsName'))]"
+            ],
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+                "siteConfig": {
+                    "appSettings": [
+                        {
+                            "name": "AzureWebJobsStorage",
+                            "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('functionAppName'))]",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';EndpointSuffix=', environment().suffixes.storage, ';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-04-01').keys[0].value)]"
+                        },
+                        {
+                            "name": "FUNCTIONS_EXTENSION_VERSION",
+                            "value": "~4"
+                        },
+                        {
+                            "name": "FUNCTIONS_WORKER_RUNTIME",
+                            "value": "python"
+                        },
+                        {
+                            "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                            "value": "[reference(resourceId('microsoft.insights/components', variables('applicationInsightsName')), '2020-02-02').InstrumentationKey]"
+                        },
+                        {
+                            "name": "WEBSITE_RUN_FROM_PACKAGE",
+                            "value": "https://raw.githubusercontent.com/illumio-shield/AzureTalksToSplunk/AzureTalksToSplunkFunctionApp.zip"
+                        },
+                        {
+                            "name": "SPLUNK_URL",
+                            "value": "[variables('SPLUNK_URL')]"
+                        },
+                        {
+                            "name": "SPLUNK_PORT",
+                            "value": "[variables('SPLUNK_PORT')]"
+                        },
+                        {
+                            "name": "HEC_TOKEN",
+                            "value": "[variables('HEC_TOKEN')]"
+                        },
+                        {
+                            "name": "SPLUNK_SOURCETYPE",
+                            "value": "[variables('SPLUNK_SOURCETYPE')]"
+                        },
+                        {
+                            "name": "EVENTS_PER_SECOND",
+                            "value": "50"
+                        }                        
+                    ]
+                },
+                "cors": {
+                    "allowedOrigins": [
+                        "https://functions.azure.com",
+                        "https://functions-staging.azure.com",
+                        "https://functions-next.azure.com"
+                    ],
+                    "supportCredentials": false
+                }
+            }
+        }
+    ]
+}
